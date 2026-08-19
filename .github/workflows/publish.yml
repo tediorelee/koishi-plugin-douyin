@@ -5,18 +5,18 @@ on:
     branches:
       - main
 
-# 最小权限：只需要读取代码，不需要写入
 permissions:
   contents: read
+  id-token: write
 
-# 防止连续 push 导致并行发布冲突
+# 防止连续push导致并行发布冲突
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   publish:
-    # 只在原仓库运行，fork 通常没有 NPM_TOKEN 密钥
-    if: !github.event.repository.fork
+    # 只在原仓库运行
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +24,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org/
+
+      - name: Ensure recent npm (Trusted Publishing 需要 ≥11.5.1)
+        run: npm install -g npm@latest
 
       - name: Check if version needs publishing
         run: |
@@ -40,6 +42,4 @@ jobs:
 
       - name: Publish to npm
         if: env.local_version != env.npm_version
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
