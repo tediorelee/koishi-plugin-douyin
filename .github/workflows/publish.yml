@@ -9,31 +9,27 @@ permissions:
   contents: read
   id-token: write
 
-# 防止连续push导致并行发布冲突
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
-    # 只在原仓库运行
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
-
-      - name: Ensure recent npm (Trusted Publishing 需要 ≥11.5.1)
-        run: npm install -g npm@latest
+          node-version: 24
+          registry-url: https://registry.npmjs.org
 
       - name: Check if version needs publishing
         run: |
           LOCAL_VERSION=$(node -p "require('./package.json').version")
           echo "Local version: $LOCAL_VERSION"
 
-          # 获取 npm 上最新版本号
           NPM_VERSION=$(npm view "${{ github.event.repository.name }}" version 2>/dev/null || echo "none")
           echo "npm latest version: $NPM_VERSION"
 
