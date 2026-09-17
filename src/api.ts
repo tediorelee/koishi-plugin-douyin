@@ -164,7 +164,9 @@ export class DouyinApi {
         return buffer
       } catch (error) {
         if (this.controller.signal.aborted) throw error
-        this.log.warn('media.download.mirror_failed', { trace, mirror: index + 1 })
+        if (index + 1 < detail.videoUrls.length) {
+          this.log.warn('media.download.mirror_failed', { trace, mirror: index + 1 })
+        }
         this.log.error('media.download.error', error, { trace, mirror: index + 1 })
       }
     }

@@ -29,12 +29,12 @@ function productionReason(fields: Record<string, unknown>): string {
   if (['UPSTREAM_RISK_CONTROL', 'SIGNING_FAILED', 'UPSTREAM_CHANGED'].includes(code)) return '抖音端暂时无法解析，请稍后再试；持续失败时请联系管理员'
   if (code === 'TASK_TIMEOUT') return '解析等待超时，请稍后再试或增加任务等待时间'
   if (code === 'TASK_NOT_FOUND') return '解析任务已过期，请重新发送链接'
-  if (code === 'TASK_CANCELLED') return '解析任务已取消，请重新发送链接'
+  if (['CANCELLED', 'TASK_CANCELLED'].includes(code)) return '解析任务已取消，请重新发送链接'
   if (code === 'INVALID_RESPONSE') return '解析服务返回的数据不完整或格式不匹配，请检查 API 版本及服务状态'
   if (['VIDEO_DOWNLOAD_FAILED', 'EMPTY_VIDEO', 'NO_VIDEO_URL', 'NO_MEDIA', 'NO_IMAGE_URL'].includes(code)) return '无法获取媒体文件，请稍后再试并检查网络连接'
   if (['NOT_FOUND', 'CONTENT_NOT_FOUND'].includes(code)) return '作品不存在或已被删除'
   if (['PRIVATE_CONTENT', 'CONTENT_PRIVATE'].includes(code)) return '作品未公开，无法读取'
-  if (['V4_PARSE_FAILED', 'INVALID_URL', 'UNSUPPORTED_CONTENT', 'UNSUPPORTED_PLATFORM', 'UNSUPPORTED_TYPE', 'INVALID_PARAMETER', 'INVALID_PARAMS', 'METHOD_NOT_SUPPORTED'].includes(code)) return '链接无效或暂不支持，请发送公开的抖音视频或图集链接'
+  if (['V4_PARSE_FAILED', 'INVALID_URL', 'UNSUPPORTED_CONTENT', 'UNSUPPORTED_PLATFORM', 'UNSUPPORTED_TYPE', 'INVALID_PARAM', 'INVALID_PARAMETER', 'INVALID_PARAMS', 'METHOD_NOT_ALLOWED', 'METHOD_NOT_SUPPORTED'].includes(code)) return '链接无效或暂不支持，请发送公开的抖音视频或图集链接'
   if (code === 'NOT_CONFIGURED') return '解析服务尚未配置完成，请联系管理员'
   return '处理未成功，请稍后再试；持续失败时请开启开发日志排查'
 }
@@ -45,7 +45,7 @@ function productionMessage(event: string, fields: Record<string, unknown>): stri
   switch (event) {
     case 'plugin.started': message = `抖音解析已启用（${fields.apiVersion === 'v5' ? 'V5' : 'V4'}）`; break
     case 'parse.sent': message = `${fields.type === 'image_album' ? '图集' : '视频'}已发送${typeof fields.elapsedMs === 'number' ? `，耗时 ${seconds(fields.elapsedMs)}` : ''}`; break
-    case 'video.skipped': message = `视频超过时长限制（${fields.maxDuration} 秒），仅发送预览`; break
+    case 'video.skipped': message = fields.unknownDuration ? '无法确认视频时长，仅发送预览' : `视频超过时长限制（${fields.maxDuration} 秒），仅发送预览`; break
     case 'api.retry': message = `暂时无法解析，${seconds(fields.delayMs)}后自动重试（第 ${fields.attempt} 次）`; break
     case 'api.task.expired': message = '解析任务已过期，正在重新解析'; break
     case 'media.download.mirror_failed': message = '视频下载地址不可用，正在尝试备用地址'; break

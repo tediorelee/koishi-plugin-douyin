@@ -53,7 +53,8 @@ export function apply(ctx: Context, config: Config) {
     const url = urls.map(value => value.replace(/&amp;/g, '&')).find(value => {
       try {
         const host = new URL(value).hostname
-        return host === 'douyin.com' || host.endsWith('.douyin.com')
+        return ['douyin.com', 'iesdouyin.com', 'amemv.com'].some(domain =>
+          host === domain || host.endsWith(`.${domain}`))
       } catch {
         return false
       }
@@ -78,10 +79,12 @@ export function apply(ctx: Context, config: Config) {
         }
       } else {
         // 下载视频
-        if (detail.duration > Number(config.maxDuration)) {
-          // 视频过长，仅发送预览图
-          log.info('video.skipped', { trace, duration: detail.duration, maxDuration: config.maxDuration })
-          parts.push('视频过长~ 请打开抖音客户端查看');
+        const unknownDuration = api.version === 'v5' &&
+          (!Number.isFinite(detail.duration) || detail.duration < 0)
+        if (unknownDuration || detail.duration > Number(config.maxDuration)) {
+          // 视频过长或 V5 时长未知，仅发送预览图。
+          log.info('video.skipped', { trace, duration: detail.duration, maxDuration: config.maxDuration, unknownDuration })
+          parts.push(unknownDuration ? '无法确认视频时长~ 请打开抖音客户端查看' : '视频过长~ 请打开抖音客户端查看');
           if (detail.cover) parts.push(h('img', { src: detail.cover }));
         } else {
           const videoBuffer = await api.download(url, detail, trace)
