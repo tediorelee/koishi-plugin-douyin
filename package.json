@@ -10,8 +10,7 @@
     "type": "git",
     "url": "git+https://github.com/tediorelee/koishi-plugin-douyin"
   },
-  "private": false,
-  "version": "0.0.14",
+  "version": "0.1.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -33,7 +32,8 @@
     }
   },
   "devDependencies": {
-    "@koishijs/client": "^5.29.1"
+    "@koishijs/client": "^5.29.1",
+    "tsx": "^4.21.0"
   },
   "peerDependencies": {
     "koishi": "^4.17.8"

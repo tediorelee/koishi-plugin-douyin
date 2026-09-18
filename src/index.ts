@@ -1,4 +1,6 @@
-import { Context, Schema, h, segment } from 'koishi'
+import { Context, Schema, h } from 'koishi'
+import { ApiConfig, ApiError, DouyinApi } from './api'
+import { Diagnostics, LogConfig, redact } from './logger'
 
 export const name = 'douyin'
 
@@ -7,7 +9,10 @@ export const usage = `
 
 考虑到解析速度+请求次数, 更换解析API为"Douyin_TikTok_Download_API"
 
-参考地址：https://github.com/Evil0ctal/Douyin_TikTok_Download_API/blob/main/README.md'
+参考地址：https://github.com/Evil0ctal/Douyin_TikTok_Download_API
+
+默认使用 V4 旧接口。接入 V5 时，请切换 API 版本、填写服务根地址与具有 douyin:read 权限的 API Key。
+日志默认使用生产模式，开发模式会增加请求阶段、任务状态、下载耗时与脱敏错误堆栈。
 
 ### 使用方法
 
@@ -19,69 +24,70 @@ https://v.douyin.com/i5cseJ9a/ 10/23 r@E.uF nQX:/
 </pre>
 `;
 
-export interface Config {
-  apiHost: string,
+export interface Config extends ApiConfig, LogConfig {
   maxDuration: string,
   forward: boolean
 }
 
 export const Config = Schema.object({
   apiHost: Schema.string().default('http://192.168.2.167:16252').description('填写你的API前缀'),
+  apiVersion: Schema.union(['v4', 'v5']).default('v4').description('API 版本（默认保留 V4 旧接口）'),
+  apiKey: Schema.string().role('secret').default('').description('V5 API Key（需要 douyin:read 权限；V4 不使用）'),
+  taskTimeout: Schema.number().min(1).max(600).default(120).description('V5 解析任务最大等待时间（秒）'),
+  pollInterval: Schema.number().min(100).max(10000).default(1000).description('V5 任务状态初始轮询间隔（毫秒），等待中逐步放慢'),
   maxDuration: Schema.string().default('90').description('允许下载的最大视频长度(秒)，否则仅发送预览图，避免bot卡住'),
   forward: Schema.boolean().default(false).description('以合并消息发送解析内容（仅支持 OneBot 适配器,其它平台开启不生效）'),
+  logEnabled: Schema.boolean().default(true).description('输出插件日志（通过 Koishi 日志系统查看）'),
+  logMode: Schema.union(['production', 'development']).default('production').description('生产模式记录结果和异常；开发模式增加请求过程、任务状态和错误堆栈'),
 })
 
 export function apply(ctx: Context, config: Config) {
 
-  async function getVideoDetailMinimal(url: string) {
-    return await ctx.http.get(config.apiHost + '/api/hybrid/video_data?url=' + url + '&minimal=true');
-  };
+  const log = new Diagnostics(ctx, config)
+  const api = new DouyinApi(ctx, config, log)
+  let sequence = 0
+  log.info('plugin.started', { apiVersion: api.version, logMode: config.logMode || 'production' })
 
   ctx.middleware(async (session, next) => {
-    if (!session.content.includes('douyin.com')) return next()
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const url = session.content.match(urlRegex)[0];
-    if (!url) return
+    const urls = session.content?.match(/https?:\/\/[^\s<>"']+/g) || []
+    const url = urls.map(value => value.replace(/&amp;/g, '&')).find(value => {
+      try {
+        const host = new URL(value).hostname
+        return ['douyin.com', 'iesdouyin.com', 'amemv.com'].some(domain =>
+          host === domain || host.endsWith(`.${domain}`))
+      } catch {
+        return false
+      }
+    })
+    if (!url) return next()
+    const trace = String(++sequence)
+    const started = Date.now()
+    log.debug('parse.start', { trace, apiVersion: api.version, platform: session.platform })
 
     try {
-      const response = await getVideoDetailMinimal(url);
-      if (response.code !== 200) {
-        return '解析失败! 该链接或许不支持';
-      }
-      const {
-        data: {
-          desc,
-          image_data,
-          music
-        }
-      } = response;
-
-      const isTypeImage = image_data && Object.keys(image_data).length > 0;
+      const detail = await api.parse(url, trace)
+      const isTypeImage = detail.isImage
+      log.debug('parse.detail', { trace, isTypeImage, imageCount: detail.images.length, duration: detail.duration })
 
       // 按发送顺序收集解析内容
-      const parts: (string | h)[] = ['抖音解析：\n' + desc];
+      const parts: (string | h)[] = ['抖音解析：\n' + detail.description];
 
       if (isTypeImage) {
         // 图集：每张图作为一个片段
-        for (const item of image_data.no_watermark_image_list) {
+        for (const item of detail.images) {
           parts.push(h('img', { src: item }));
         }
       } else {
         // 下载视频
-        const videoDuration = music && music.duration;
-        if (videoDuration > config.maxDuration) {
-          // 视频过长，仅发送预览图
-          const {
-            data: {
-              cover_data: coverData
-            }
-          } = response;
-          parts.push('视频过长~ 请打开抖音客户端查看');
-          parts.push(h('img', { src: coverData?.dynamic_cover?.url_list[0] }));
+        const unknownDuration = api.version === 'v5' &&
+          (!Number.isFinite(detail.duration) || detail.duration < 0)
+        if (unknownDuration || detail.duration > Number(config.maxDuration)) {
+          // 视频过长或 V5 时长未知，仅发送预览图。
+          log.info('video.skipped', { trace, duration: detail.duration, maxDuration: config.maxDuration, unknownDuration })
+          parts.push(unknownDuration ? '无法确认视频时长~ 请打开抖音客户端查看' : '视频过长~ 请打开抖音客户端查看');
+          if (detail.cover) parts.push(h('img', { src: detail.cover }));
         } else {
-          const videoBuffer = await ctx.http.get<ArrayBuffer>(config.apiHost + '/api/download?url=' + url + '&prefix=true&with_watermark=true', {
-            responseType: 'arraybuffer',
-          });
+          const videoBuffer = await api.download(url, detail, trace)
           parts.push(h.video(videoBuffer, 'video/mp4'));
         }
       }
@@ -92,7 +98,7 @@ export function apply(ctx: Context, config: Config) {
           forward: true,
           children: parts.map(part => h('message', part)),
         }));
-      } else if (isTypeImage && image_data.no_watermark_image_list.length > 3) {
+      } else if (isTypeImage && detail.images.length > 3) {
         // 保留原有行为：图集超过 3 张时合并为转发消息
         await session.send(parts[0]);
         await session.send(h('message', { forward: true, children: parts.slice(1) }));
@@ -102,9 +108,11 @@ export function apply(ctx: Context, config: Config) {
           await session.send(part);
         }
       }
+      log.info('parse.sent', { trace, apiVersion: api.version, type: isTypeImage ? 'image_album' : 'video', parts: parts.length, elapsedMs: Date.now() - started })
     } catch(err) {
-      console.log(err);
-      return `发生错误! 请重试; ${err}`;
+      log.error('parse.failed', err, { trace, apiVersion: api.version, elapsedMs: Date.now() - started })
+      if (err instanceof ApiError && err.code === 'V4_PARSE_FAILED') return err.message
+      return `发生错误! 请重试; ${redact(String(err), config.apiKey)}`;
     }
   });
 }
